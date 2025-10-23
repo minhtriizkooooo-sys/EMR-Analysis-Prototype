@@ -1,6 +1,7 @@
+# Sử dụng phiên bản Python chính xác như bạn đã khai báo trong runtime.txt
 FROM python:3.11.8-slim
 
-# Install system dependencies, including gfortran for SciPy/NumPy
+# Cài đặt system dependencies, bao gồm gfortran (cho SciPy) và các thư viện khác (cho TensorFlow)
 RUN apt-get update && apt-get install -y \
     gfortran \
     libblas-dev \
@@ -9,12 +10,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Copy requirements.txt và cài đặt Python dependencies
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy phần còn lại của code
 COPY . .
 
-# Use the environment variable $PORT as required by Render for Docker services
+# Lệnh khởi động (sử dụng gunicorn)
+# Render sẽ tự động gán cổng ($PORT) cho container.
 CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080"]
-# Note: Render often maps the public port to 8080/10000 inside the container for Docker.
-# If "0.0.0.0:8080" fails, try "0.0.0.0:10000" or just "0.0.0.0" depending on your gunicorn version and Render setup.
+# Lưu ý: Nếu gunicorn không tự nhận PORT, thử sử dụng cổng cố định như 8080 hoặc 10000.
