@@ -5,6 +5,7 @@
 import base64
 import os
 import io
+import logging  # THÊM: Thư viện logging để ghi log
 from PIL import Image
 from flask import (
     Flask,
@@ -17,13 +18,17 @@ from flask import (
     send_from_directory
 )
 
+# THÊM: Thiết lập logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 try:
     from tensorflow.keras.models import load_model
     from tensorflow.keras.preprocessing import image
     import numpy as np
     TF_LOADED = True
 except ImportError:
-    print("WARNING: Tensorflow/Keras không được tìm thấy. Chỉ sử dụng chế độ mô phỏng.")
+    logger.warning("Tensorflow/Keras không được tìm thấy. Chỉ sử dụng chế độ mô phỏng.")
     TF_LOADED = False
     class MockModel:
         def predict(self, x, verbose=0):
@@ -46,6 +51,9 @@ import random
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+
+# THÊM: Giới hạn kích thước file upload (10MB)
+MAX_FILE_SIZE_MB = 10
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp'}
 
@@ -70,19 +78,19 @@ NONODULE_IMAGES = [
 
 def download_model_from_drive(file_id, destination_file_name):
     if os.path.exists(destination_file_name):
-        print(f"Model '{destination_file_name}' đã tồn tại, không tải lại.")
+        logger.info(f"Model '{destination_file_name}' đã tồn tại, không tải lại.")
         return True
     if not TF_LOADED:
-        print("Model load bị bỏ qua vì Tensorflow/Keras không được tìm thấy.")
+        logger.warning("Model load bị bỏ qua vì Tensorflow/Keras không được tìm thấy.")
         return False
     try:
         url = f"https://drive.google.com/uc?id={file_id}"
-        print(f"Đang tải model từ Google Drive: {url}")
+        logger.info(f"Đang tải model từ Google Drive: {url}")
         gdown.download(url, destination_file_name, quiet=False)
-        print("Tải model thành công!")
+        logger.info("Tải model thành công!")
         return True
     except Exception as e:
-        print(f"Lỗi tải model: {e}")
+        logger.error(f"Lỗi tải model: {e}")
         return False
 
 model = None
@@ -90,20 +98,28 @@ if TF_LOADED:
     try:
         if download_model_from_drive(DRIVE_MODEL_FILE_ID, LOCAL_MODEL_CACHE):
             model = load_model(LOCAL_MODEL_CACHE)
-            print("Model đã được load thành công.")
+            logger.info("Model đã được load thành công.")
+            # THÊM: Kiểm tra input shape của model
+            logger.info(f"Model input shape: {model.input_shape}")
     except Exception as e:
-        print(f"Không load được model: {e}")
+        logger.error(f"Không load được model: {e}")
 else:
-    print("Bỏ qua việc tải và load model do thiếu thư viện TF/Keras.")
+    logger.warning("Bỏ qua việc tải và load model do thiếu thư viện TF/Keras.")
 
 def preprocess_image(file_stream):
     if not TF_LOADED:
+        logger.warning("Preprocessing mô phỏng do thiếu Tensorflow/Keras.")
         return np.zeros((1, 224, 224, 3))
-    img = image.load_img(file_stream, target_size=(224, 224))
-    x = image.img_to_array(img)
-    x = x / 255.0
-    x = np.expand_dims(x, axis=0)
-    return x
+    try:
+        img = image.load_img(file_stream, target_size=(224, 224))
+        x = image.img_to_array(img)
+        x = x / 255.0
+        x = np.expand_dims(x, axis=0)
+        logger.debug(f"Preprocessed image shape: {x.shape}")
+        return x
+    except Exception as e:
+        logger.error(f"Lỗi trong preprocess_image: {e}")
+        raise
 
 @app.route("/", methods=["GET"])
 def index():
@@ -115,7 +131,6 @@ def login():
     password = request.form.get("password")
     if username == "user_demo" and password == "Test@123456":
         session['user'] = username
-        #flash("Đăng nhập thành công!", "success")
         return redirect(url_for("dashboard"))
     else:
         flash("Sai ID hoặc mật khẩu.", "danger")
@@ -145,6 +160,14 @@ def emr_profile():
             
         filename = file.filename
         
+        # THÊM: Kiểm tra kích thước file
+        file.seek(0, os.SEEK_END)
+        file_size_mb = file.tell() / (1024 * 1024)
+        file.seek(0)
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            flash(f"File quá lớn. Kích thước tối đa: {MAX_FILE_SIZE_MB} MB.", "danger")
+            return render_template('emr_profile.html', summary=None, filename=filename)
+
         try:
             file_stream = io.BytesIO(file.read())
             if filename.lower().endswith('.csv'):
@@ -202,6 +225,7 @@ def emr_profile():
             summary += "<div class='overflow-x-auto shadow-md rounded-lg'>" + table_html + "</div>"
             
         except Exception as e:
+            logger.error(f"Lỗi xử lý file EMR: {e}")
             summary = f"<p class='text-red-500 font-semibold text-xl'>Lỗi xử lý file EMR: <code class='text-gray-700 bg-gray-100 p-1 rounded'>{e}</code></p>"
             
     return render_template('emr_profile.html', summary=summary, filename=filename)
@@ -232,8 +256,19 @@ def emr_prediction():
             flash(f"Định dạng file không hợp lệ. Chỉ chấp nhận: {', '.join(ALLOWED_EXTENSIONS)}", "danger")
             return redirect(url_for("emr_prediction"))
 
-        # Initialize prediction cache if not present
+        # THÊM: Kiểm tra kích thước file
+        file.seek(0, os.SEEK_END)
+        file_size_mb = file.tell() / (1024 * 1024)
+        file.seek(0)
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            flash(f"File quá lớn. Kích thước tối đa: {MAX_FILE_SIZE_MB} MB.", "danger")
+            return redirect(url_for("emr_prediction"))
+
+        # THÊM: Giới hạn kích thước cache
         if 'prediction_cache' not in session:
+            session['prediction_cache'] = {}
+        if len(session['prediction_cache']) > 100:  # Giới hạn 100 kết quả
+            logger.info("Bộ nhớ cache đầy, xóa cache.")
             session['prediction_cache'] = {}
 
         # Check cache first
@@ -259,7 +294,7 @@ def emr_prediction():
                     index = NONODULE_IMAGES.index(filename)
                     prob_non_nodule = BASE_PROB - (index * PROB_DECREMENT)
                     prediction = {'result': 'Non-nodule', 'probability': prob_non_nodule}
-                #flash(f"Đã sử dụng kết quả mô phỏng cố định cho file: '{filename}'.", "info")
+                flash(f"Đã sử dụng kết quả mô phỏng cố định cho file: '{filename}'.", "info")
             else:
                 # Non-fixed image logic
                 try:
@@ -271,7 +306,11 @@ def emr_prediction():
                     else:
                         file_stream_for_model = io.BytesIO(img_bytes)
                         x = preprocess_image(file_stream_for_model)
+                        # THÊM: Đo thời gian dự đoán
+                        import time
+                        start_time = time.time()
                         preds = model.predict(x, verbose=0)
+                        logger.info(f"Thời gian dự đoán: {time.time() - start_time:.2f} giây")
                         score = preds[0][0]
                         if score > 0.5:
                             prediction = {'result': 'Nodule', 'probability': float(score)}
@@ -279,15 +318,15 @@ def emr_prediction():
                             prediction = {'result': 'Non-nodule', 'probability': float(1.0 - score)}
                         flash(f"Dự đoán bằng Model H5 thành công. Độ tin cậy: {prediction['probability']:.2%}.", "success")
                     
-                    # Cache the result for non-fixed images
+                    # Cache the result
                     session['prediction_cache'][filename] = {
                         'prediction': prediction,
                         'image_b64': image_b64
                     }
-                    session.modified = True  # Ensure session is marked as modified
+                    session.modified = True
                 except Exception as e:
-                    print(f"Lỗi xử lý ảnh bằng model: {e}")
-                    flash(f"Lỗi xử lý ảnh: {e}", "danger")
+                    logger.error(f"Lỗi xử lý ảnh bằng model: {e}")
+                    flash(f"Lỗi xử lý ảnh: {str(e)}", "danger")
                     return redirect(url_for("emr_prediction"))
 
     return render_template('emr_prediction.html', prediction=prediction, filename=filename, image_b64=image_b64)
@@ -296,11 +335,9 @@ def emr_prediction():
 def logout():
     session.pop('user', None)
     session.pop('prediction_cache', None)
-    #flash("Đã đăng xuất.", "success")
+    flash("Đã đăng xuất.", "success")
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
-
