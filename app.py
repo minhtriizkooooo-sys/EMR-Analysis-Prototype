@@ -101,51 +101,79 @@ def dashboard():
 @app.route("/emr_profile", methods=["GET", "POST"])
 def emr_profile():
     if 'user' not in session:
+        flash("Vui lòng đăng nhập trước khi truy cập.", "danger")
         return redirect(url_for("index"))
         
     summary = None
     filename = None
     
     if request.method == "POST":
+        file = request.files.get('file')
+        if not file or file.filename == '':
+            flash("Không có file nào được tải lên.", "danger")
+            return render_template('emr_profile.html', summary=None, filename=None)
+            
+        filename = file.filename
+        
         try:
-            file = request.files.get('file')
-            if not file or not file.filename:
-                flash("❌ Chưa chọn file.", "danger")
-                return render_template('emr_profile.html')
+            file_stream = io.BytesIO(file.read())
+            if filename.lower().endswith('.csv'):
+                df = pd.read_csv(file_stream)
+            elif filename.lower().endswith(('.xls', '.xlsx')):
+                df = pd.read_excel(file_stream)
+            else:
+                summary = f"<p class='text-red-500 font-semibold'>Chỉ hỗ trợ file CSV hoặc Excel. File: {filename}</p>"
+                return render_template('emr_profile.html', summary=summary, filename=filename)
+
+            rows, cols = df.shape
+            col_info = []
+            
+            for col in df.columns:
+                dtype = str(df[col].dtype)
+                missing = df[col].isnull().sum()
+                unique_count = df[col].nunique()
+                desc_stats = ""
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    desc = df[col].describe().to_dict()
+                    desc_stats = (
+                        f"Min: {desc.get('min', 'N/A'):.2f}, "
+                        f"Max: {desc.get('max', 'N/A'):.2f}, "
+                        f"Mean: {desc.get('mean', 'N/A'):.2f}, "
+                        f"Std: {desc.get('std', 'N/A'):.2f}"
+                    )
                 
-            filename = file.filename
+                col_info.append(f"""
+                    <li class="bg-gray-50 p-3 rounded-lg border-l-4 border-primary-green">
+                        <strong class="text-gray-800">{col}</strong>
+                        <ul class="ml-4 text-sm space-y-1 mt-1 text-gray-600">
+                            <li><i class="fas fa-code text-indigo-500 w-4"></i> Kiểu dữ liệu: {dtype}</li>
+                            <li><i class="fas fa-exclamation-triangle text-yellow-500 w-4"></i> Thiếu: {missing} ({missing/rows*100:.2f}%)</li>
+                            <li><i class="fas fa-hashtag text-teal-500 w-4"></i> Giá trị duy nhất: {unique_count}</li>
+                            {'<li class="text-xs text-gray-500"><i class="fas fa-chart-bar text-green-500 w-4"></i> Thống kê mô tả: ' + desc_stats + '</li>' if desc_stats else ''}
+                        </ul>
+                    </li>
+                """)
             
-            # ✅ SIZE CHECK TRƯỚC
-            file.seek(0, os.SEEK_END)
-            file_size = file.tell()
-            file.seek(0)
-            
-            if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
-                flash(f"❌ File quá lớn ({file_size//(1024*1024)}MB)", "danger")
-                return render_template('emr_profile.html', filename=filename)
-            
-            summary = f"""
-            <div class='bg-green-50 p-6 rounded-xl border-l-4 border-green-500'>
-                <h3 class='text-2xl font-bold text-green-700 mb-4'>
-                    <i class='fas fa-check-circle mr-2'></i>✅ File nhận thành công!
-                </h3>
-                <div class='grid grid-cols-2 gap-6'>
-                    <div class='p-4 bg-white rounded-lg text-center'>
-                        <div class='text-2xl font-bold text-blue-600'>{filename}</div>
-                        <div class='text-sm text-gray-600 mt-2'>Tên file</div>
-                    </div>
-                    <div class='p-4 bg-white rounded-lg text-center'>
-                        <div class='text-2xl font-bold text-green-600'>{file_size//1024}KB</div>
-                        <div class='text-sm text-gray-600 mt-2'>Kích thước</div>
-                    </div>
+            info = f"""
+            <div class='bg-green-50 p-6 rounded-lg shadow-inner'>
+                <h3 class='text-2xl font-bold text-product-green mb-4'><i class='fas fa-info-circle mr-2'></i> Thông tin Tổng quan</h3>
+                <div class='grid grid-cols-1 md:grid-cols-2 gap-4 text-left'>
+                    <p class='font-medium text-gray-700'><i class='fas fa-th-list text-indigo-500 mr-2'></i> Số dòng dữ liệu: <strong>{rows}</strong></p>
+                    <p class='font-medium text-gray-700'><i class='fas fa-columns text-indigo-500 mr-2'></i> Số cột dữ liệu: <strong>{cols}</strong></p>
                 </div>
             </div>
             """
             
+            table_html = df.head().to_html(classes="table-auto min-w-full divide-y divide-gray-200", index=False)
+            summary = info
+            summary += f"<h4 class='text-xl font-semibold mt-8 mb-4 text-gray-700'><i class='fas fa-cogs mr-2 text-primary-green'></i> Phân tích Cấu trúc Cột ({cols} Cột):</h4>"
+            summary += f"<ul class='space-y-3 grid grid-cols-1 md:grid-cols-2 gap-3'>{''.join(col_info)}</ul>"
+            summary += "<h4 class='text-xl font-semibold mt-8 mb-4 text-gray-700'><i class='fas fa-table mr-2 text-primary-green'></i> 5 Dòng Dữ liệu Đầu tiên:</h4>"
+            summary += "<div class='overflow-x-auto shadow-md rounded-lg'>" + table_html + "</div>"
+            
         except Exception as e:
-            logger.error(f"EMR ERROR: {e}")
-            flash("❌ Lỗi xử lý file.", "danger")
-    
+            summary = f"<p class='text-red-500 font-semibold text-xl'>Lỗi xử lý file EMR: <code class='text-gray-700 bg-gray-100 p-1 rounded'>{e}</code></p>"
+            
     return render_template('emr_profile.html', summary=summary, filename=filename)
 
 @app.route("/emr_prediction", methods=["GET", "POST"])
@@ -215,7 +243,7 @@ def emr_prediction():
                 session.modified = True
                 
                 prob_str = f"{prediction['probability']:.1%}"
-                flash(f"✅ AI: <strong>{prediction['result']}</strong> ({prob_str})", "success")
+                #flash(f"✅ AI: <strong>{prediction['result']}</strong> ({prob_str})", "success")
 
         except Exception as e:
             logger.error(f"PREDICTION CRASH: {e}")
@@ -240,3 +268,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     logger.info("🚀 EMR AI - FIXED BASE64 CRASH")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+
