@@ -2,8 +2,8 @@ FROM python:3.11
 
 WORKDIR /app
 
-# Install system dependencies for scientific libraries.
-# **FIX:** Thêm 'gfortran' và 'build-essential' để giải quyết lỗi compiler của SciPy.
+# Install system dependencies.
+# The key fix is adding 'gfortran' and 'build-essential'
 RUN apt-get update && apt-get install -y \
     gfortran \
     build-essential \
@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
+# Pip will now find gfortran and successfully build SciPy
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
