@@ -138,7 +138,7 @@ def login():
     if username == "user_demo" and password == "Test@123456":
         session['user'] = username
         logger.info(f"✅ Login SUCCESS: {username}")
-        flash("Đăng nhập thành công!", "success")
+        #flash("Đăng nhập thành công!", "success")
         return redirect(url_for("dashboard"))
     else:
         logger.warning(f"❌ Login FAILED: {username}")
@@ -349,3 +349,4 @@ if __name__ == "__main__":
         threaded=True,         # ✅ Multi-thread
         processes=1            # ✅ Single process ổn định
     )
+
