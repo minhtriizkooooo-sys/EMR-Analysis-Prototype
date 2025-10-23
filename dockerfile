@@ -1,20 +1,16 @@
-# Dockerfile
-# This explicitly uses the 3.11.8 version you need
-FROM python:3.11.8-slim
+FROM python:3.11
 
-# This installs gfortran and system libs (Resolves Read-only error)
+WORKDIR /app
+
+# Install system dependencies for tensorflow-cpu and other libraries
 RUN apt-get update && apt-get install -y \
-    gfortran \
     libblas-dev \
     liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-COPY requirements.txt .
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Use a standard port (8080) for reliability with Gunicorn/Render Docker
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080"]
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:$PORT"]
