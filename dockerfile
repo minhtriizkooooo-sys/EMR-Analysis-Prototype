@@ -1,24 +1,20 @@
-# Sử dụng Python 3.11.8 slim
+# Dockerfile
+# This explicitly uses the 3.11.8 version you need
 FROM python:3.11.8-slim
 
-# Cài đặt các gói hệ thống cần thiết (gfortran, libblas-dev, liblapack-dev)
-# This step will now work because it's inside a Docker build environment.
+# This installs gfortran and system libs (Resolves Read-only error)
 RUN apt-get update && apt-get install -y \
     gfortran \
     libblas-dev \
     liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Thiết lập thư mục làm việc
 WORKDIR /app
 
-# Sao chép và cài đặt requirements.txt
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Sao chép mã nguồn
 COPY . .
 
-# Lệnh khởi động - use a fixed port (e.g., 8080 or 10000) for better reliability with Docker
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080"] 
-# Change 8080 to 10000 if 8080 fails.
+# Use a standard port (8080) for reliability with Gunicorn/Render Docker
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080"]
