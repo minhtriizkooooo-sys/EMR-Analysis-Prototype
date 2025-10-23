@@ -12,6 +12,11 @@ from flask import (
     Flask, flash, redirect, render_template, request, session, url_for
 )
 
+# Thư viện cho Data Analysis (Sử dụng Pandas và openpyxl/numpy/scipy/h5py)
+import pandas as pd
+# Mặc dù không sử dụng TensorFlow/Keras ở đây, nhưng giữ lại các import cơ bản
+# để đảm bảo các thư viện này được cài đặt thành công nếu cần sau này.
+
 # LOGGING ỔN ĐỊNH
 logging.basicConfig(
     level=logging.INFO,
@@ -74,7 +79,8 @@ def safe_image_to_b64(img_bytes, max_size=200):
             # Base64 nhỏ gọn
             b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
             return b64
-    except:
+    except Exception as e:
+        logger.error(f"Error generating thumbnail: {e}")
         return None
 
 @app.route("/", methods=["GET"])
@@ -96,6 +102,7 @@ def login():
 def dashboard():
     if 'user' not in session:
         return redirect(url_for("index"))
+    # FIXED MODE vì đã loại bỏ model TensorFlow/Keras
     return render_template("dashboard.html", model_status="✅ FIXED MODE")
 
 @app.route("/emr_profile", methods=["GET", "POST"])
@@ -117,6 +124,11 @@ def emr_profile():
         
         try:
             file_stream = io.BytesIO(file.read())
+            
+            # Check file size early (if not already done by Nginx/MAX_CONTENT_LENGTH)
+            if len(file_stream.getvalue()) > MAX_FILE_SIZE_MB * 1024 * 1024:
+                raise ValueError(f"File quá lớn ({len(file_stream.getvalue())//(1024*1024)}MB > 4MB)")
+
             if filename.lower().endswith('.csv'):
                 df = pd.read_csv(file_stream)
             elif filename.lower().endswith(('.xls', '.xlsx')):
@@ -200,9 +212,9 @@ def emr_prediction():
                 return render_template('emr_prediction.html')
 
             # ✅ SIZE CHECK SIÊU NHANH
-            file.seek(0, os.SEEK_END)
-            file_size = file.tell()
-            file.seek(0)
+            # Đọc file để kiểm tra kích thước và xử lý
+            img_bytes = file.read()
+            file_size = len(img_bytes)
             
             if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
                 flash(f"❌ File quá lớn ({file_size//(1024*1024)}MB > 4MB)", "danger")
@@ -226,8 +238,6 @@ def emr_prediction():
                 prediction = get_fixed_prediction(filename)
                 
                 # ✅ ĐỌC FILE + THUMBNAIL - KHÔNG CRASH
-                img_bytes = file.read()
-                
                 # TẠO THUMBNAIL 200x200
                 thumb_b64 = safe_image_to_b64(img_bytes, max_size=200)
                 if thumb_b64:
@@ -242,8 +252,7 @@ def emr_prediction():
                 }
                 session.modified = True
                 
-                prob_str = f"{prediction['probability']:.1%}"
-                #flash(f"✅ AI: <strong>{prediction['result']}</strong> ({prob_str})", "success")
+                # flash(f"✅ AI: <strong>{prediction['result']}</strong> ({prob_str})", "success")
 
         except Exception as e:
             logger.error(f"PREDICTION CRASH: {e}")
@@ -251,9 +260,9 @@ def emr_prediction():
             return render_template('emr_prediction.html')
 
     return render_template('emr_prediction.html', 
-                         prediction=prediction, 
-                         filename=filename, 
-                         image_b64=image_b64)
+                           prediction=prediction, 
+                           filename=filename, 
+                           image_b64=image_b64)
 
 @app.route("/logout")
 def logout():
@@ -262,10 +271,11 @@ def logout():
 
 @app.route("/health")
 def health():
-    return {"status": "healthy"}
+    # Thêm route Health Check tiêu chuẩn
+    return {"status": "healthy"}, 200
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+    # KHÔNG DÙNG 10000. DÙNG BIẾN MÔI TRƯỜNG $PORT DO Render CUNG CẤP
+    port = int(os.environ.get("PORT", 5000)) # Dùng 5000 làm mặc định cho local
     logger.info("🚀 EMR AI - FIXED BASE64 CRASH")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
-
